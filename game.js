@@ -1,7 +1,11 @@
 // ぴたリング：画面遷移・入力・描画（ルールの計算は logic.js）
 import {
-  CONFIG, modeOf, normalizeModeId, readySubText, tForStage, waitSecFor, elapsedAt, stageAt, nextK, nextShape,
-  shapeVertices, proLayout, proAutoMissAtSec, proAutoMissAtMs, ringMaxRatio, judge, tapTimeSec, newPlayState, stageOf, applyJudgement, formatNumber, bestScoreText,
+  CONFIG, modeOf, normalizeModeId, normalizeProSpeed, hudLabelOf, isFixedSpeedMode, readySubText,
+  tForStage, waitSecFor, elapsedAt, stageAt, nextK, nextShape, shapeVertices,
+  proLayout, proAutoMissAtSec, proAutoMissAtMs, proIgnoreUntilMs, ringMaxRatio, waitTapResult,
+  dailySeed, roundRand, dateKeyOf, dateLabel,
+  judge, tapTimeSec, newPlayState, stageOf, applyJudgement, formatNumber, bestScoreText,
+  dailyTodayText, dailyAllTimeText, proNoteText, dailyNoteText, shareText,
   computeS, titleDemoLayout, createStore, isTouchPrimary, shouldBlockLandscape, frameWidth,
   newClock, isClockRunning, startClock, stopClock, deadlineOf, remainingMs, displaySeconds, isTimeWarning,
   timerBarRatio, isTimeUp, acceptsTapAt, pauseEndMs, judgementEndMs, growFrameEvent, endTexts,
@@ -24,9 +28,15 @@ const HISTORY_STATE = { app: 'pitaring' };
 const $ = (id) => document.getElementById(id);
 const el = {
   app: $('app'),
-  screens: { title: $('screen-title'), game: $('screen-game'), result: $('screen-result') },
+  screens: { title: $('screen-title'), speed: $('screen-speed'), game: $('screen-game'), result: $('screen-result') },
   modeButtons: $('mode-buttons'),
+  titleDesc: $('title-desc'),
   demoCanvas: $('demo-canvas'),
+  speedValue: $('speed-value'),
+  speedInfo: $('speed-info'),
+  speedButtons: $('speed-buttons'),
+  btnSpeedStart: $('btn-speed-start'),
+  btnSpeedBack: $('btn-speed-back'),
   gameCanvas: $('game-canvas'),
   hud: $('hud'),
   hudScore: $('hud-score'),
@@ -48,10 +58,13 @@ const el = {
   resultReason: $('result-reason'),
   resultNew: $('result-new'),
   resultScore: $('result-score'),
-  resultBestMode: $('result-best-mode'),
   resultBest: $('result-best'),
+  resultBestSub: $('result-best-sub'),
   resultUnsaved: $('result-unsaved'),
   resultDetail: $('result-detail'),
+  btnShare: $('btn-share'),
+  shareNotice: $('share-notice'),
+  shareFallback: $('share-fallback'),
   btnRetry: $('btn-retry'),
   btnToTitle: $('btn-to-title'),
   missFlash: $('miss-flash'),
@@ -66,17 +79,21 @@ const store = createStore(() => window.localStorage);
 store.load();
 
 // ===== 状態 =====
-let screen = 'title';     // 'title' | 'game' | 'result'
+let screen = 'title';     // 'title' | 'speed' | 'game' | 'result'
 let paused = false;
 let S = CONFIG.S_MIN;     // ゲーム領域の一辺（CSS px）
 let demoSize = 0;         // タイトルのデモの一辺 D（0なら出さない）
 let dpr = 1;
+let selectedSpeed = CONFIG.PRO_DEFAULT_SPEED; // 画面1b で選んでいる Speed
 
-let play = null;          // 1プレイの成績（logic.js の newPlayState）。play.mode がモード
-// round：{ k, W, shape, keepK, layout, layoutStage, ringMax, next, results, roundPoints, successCount }
+let play = null;          // 1プレイの成績（logic.js の newPlayState）。play.mode がモード、今日のチャレンジは play.dateKey も持つ
+let dailySeedValue = null; // 今日のチャレンジの乱数の種（プレイを始めた日。プレイ中は変えない）
+// round：{ index, k, W, shape, keepK, layout, layoutStage, ringMax, next, results, roundPoints, successCount, waitStart, ignoreUntil }
+//   index：ラウンドの番号（新しいラウンドで +1。今日のチャレンジの盤の番号）
 //   keepK=true なら再開後に同じ k・W・形（Professional は同じ配置）を使う
-//   layout：Professional の配置（logic.js proLayout）。ほかのモードは null
+//   layout：Professional・今日のチャレンジの配置（logic.js proLayout）。ほかのモードは null
 //   next：次に判定する目標の番号（内側から0始まり）。results[i]：{ result, at }（判定した目標）
+//   waitStart：① 待ちが始まった時刻。ignoreUntil：次の ① でこの時刻までのタップもお手つきにしない（仕様書4.11.5）
 let round = null;
 let phase = null;         // 'ready' | 'wait' | 'grow' | 'result' | 'timeup' | null（一時停止中）
 let phaseStart = 0;       // その段階が始まった時刻（ms、performance.now と同じ時計）
@@ -87,11 +104,13 @@ let judged = null;        // { result, early, points, rRatio }（③ 結果表�
 let endReason = null;     // null（プレイ中）| 'lives'（ライフ0の判定後）| 'timeup'（時間切れ）。終了後は一時停止を受け付けない
 let speedBanner = null;   // { stage, start }
 let lastRecord = null;    // recordPlayEnd の戻り値
+let lastShareText = '';   // 結果画面のシェアの文面
 let clock = newClock();   // 制限時間の時計（logic.js。仕様書4.9.2）
 let lastFrameTs = null;   // 最後に処理した rAF の ts（一時停止した区間の終わりに使う）
 let shownSec = null;      // HUD に出している残り秒数（数字が変わったときだけ弾ませる）
 let rafId = null;
 let missTimer = null;
+let shareNoticeTimer = null;
 
 // ===== 画面切替 =====
 function showScreen(name) {
@@ -99,15 +118,19 @@ function showScreen(name) {
   for (const [key, node] of Object.entries(el.screens)) node.classList.toggle('active', key === name);
 }
 
+function todayKey() {
+  return dateKeyOf(new Date());
+}
+
 // ===== タイトルのモードボタン（仕様書6.2） =====
-const modeButtonParts = {}; // modeId → { button, best }
+const modeButtonParts = {}; // modeId → { button, best, note }
 function buildModeButtons() {
   el.modeButtons.innerHTML = '';
   for (const id of CONFIG.MODE_ORDER) {
     const mode = CONFIG.MODES[id];
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = 'mode-btn';
+    button.className = id === 'daily' ? 'mode-btn daily' : 'mode-btn';
     button.dataset.mode = id;
     const row1 = document.createElement('span');
     row1.className = 'mode-row1';
@@ -119,20 +142,104 @@ function buildModeButtons() {
     row1.append(label, best);
     const note = document.createElement('span');
     note.className = 'mode-note';
-    note.textContent = mode.note;
+    note.textContent = mode.note || '';
     button.append(row1, note);
-    button.addEventListener('click', () => startGame(id));
+    // Professional は画面1b へ。ほかのモードは押すとすぐ始まる
+    button.addEventListener('click', () => (mode.speedSelect ? openSpeedSelect() : startGame(id)));
     el.modeButtons.appendChild(button);
-    modeButtonParts[id] = { button, best };
+    modeButtonParts[id] = { button, best, note };
   }
 }
 
 function refreshTitle() {
   const data = store.data;
+  const key = todayKey();
   for (const id of CONFIG.MODE_ORDER) {
     const parts = modeButtonParts[id];
-    parts.best.textContent = `最高 ${bestScoreText(data.modes[id])}`;
+    if (id === 'daily') {
+      // 右に今日の日付、2行目に「SPEED 30・全員同じ盤・今日 ○」
+      parts.best.textContent = dateLabel(key);
+      parts.note.textContent = dailyNoteText(data.daily.today, key);
+    } else if (id === 'pro') {
+      // 前回選んだ Speed の最高と説明文
+      parts.best.textContent = `最高 ${bestScoreText(data.pro.speeds[data.pro.lastSpeed])}`;
+      parts.note.textContent = proNoteText(data.pro);
+    } else {
+      parts.best.textContent = `最高 ${bestScoreText(data.modes[id])}`;
+    }
     parts.button.classList.toggle('last', id === data.lastMode);
+  }
+}
+
+function showTitle() {
+  showScreen('title');
+  layoutDemo(); // ゲーム中に画面の大きさが変わっていた場合に合わせ直す
+  refreshTitle();
+  requestLoop();
+}
+
+// ===== 画面1b：スピード選択（仕様書6.2.1） =====
+const speedButtonOf = {}; // Speed → button
+function buildSpeedButtons() {
+  el.speedButtons.innerHTML = '';
+  for (const s of CONFIG.PRO_SPEED_CHOICES) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'speed-btn';
+    button.dataset.speed = String(s);
+    button.textContent = String(s);
+    button.addEventListener('click', () => selectSpeed(s, false));
+    el.speedButtons.appendChild(button);
+    speedButtonOf[s] = button;
+  }
+}
+
+function renderSpeedSelect() {
+  const s = selectedSpeed;
+  el.speedValue.textContent = `SPEED ${s}`;
+  el.speedInfo.textContent = `輪が届くまで ${tForStage(s).toFixed(2)}秒 ・ 最高 ${bestScoreText(store.proRecordOf(s))}`;
+  el.btnSpeedStart.textContent = `SPEED ${s} でスタート`;
+  for (const v of CONFIG.PRO_SPEED_CHOICES) {
+    const on = v === s;
+    speedButtonOf[v].classList.toggle('selected', on);
+    speedButtonOf[v].setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+}
+
+// Speed のボタン → その Speed を選ぶ（まだ始まらない）
+function selectSpeed(speed, moveFocus) {
+  selectedSpeed = normalizeProSpeed(speed);
+  renderSpeedSelect();
+  if (moveFocus) speedButtonOf[selectedSpeed].focus();
+}
+
+// 開いたときは前回の Speed（初回は10）が選ばれ、フォーカスもそのボタン
+function openSpeedSelect(speed = store.data.pro.lastSpeed) {
+  showScreen('speed');
+  selectSpeed(speed, true);
+}
+
+function startSelectedSpeed() {
+  startGame('pro', selectedSpeed);
+}
+
+// PC：← → で1つ前・次の Speed、Enter でスタート（フォーカスが「もどる」のときだけもどる）、Esc でもどる
+function onSpeedKeyDown(e) {
+  const choices = CONFIG.PRO_SPEED_CHOICES;
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+    e.preventDefault();
+    const i = choices.indexOf(selectedSpeed) + (e.key === 'ArrowRight' ? 1 : -1);
+    selectSpeed(choices[Math.min(Math.max(i, 0), choices.length - 1)], true);
+  } else if (e.key === 'Enter') {
+    if (document.activeElement === el.btnSpeedBack) return; // ボタンの標準動作（もどる）に任せる
+    e.preventDefault();
+    if (e.repeat) return;
+    const focusedSpeed = document.activeElement && document.activeElement.dataset ? Number(document.activeElement.dataset.speed) : NaN;
+    if (choices.includes(focusedSpeed)) selectSpeed(focusedSpeed, false);
+    startSelectedSpeed();
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    showTitle();
   }
 }
 
@@ -180,13 +287,21 @@ function recomputeLayout() {
   document.documentElement.style.setProperty('--frame-w', `${fw}px`);
   S = computeS(fw, vh, readSafeArea());
   sizeCanvas(el.gameCanvas, S);
-  // タイトルのデモ：説明とモードのボタンの間の空きの中央（仕様書6.2）
-  const demo = titleDemoLayout(el.app.clientHeight || vh);
+  layoutDemo();
+  if (screen === 'game') drawGame(performance.now());
+}
+
+// タイトルのデモ：説明とモードのボタンの間の空きの中央（仕様書6.2）。
+// 説明文は狭い幅で2行になるので、実際の下端を測って渡す（タイトル画面が出ているときだけ測れる）
+function layoutDemo() {
+  if (screen !== 'title') return;
+  const vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+  const descBottom = el.titleDesc.getBoundingClientRect().bottom - el.screens.title.getBoundingClientRect().top;
+  const demo = titleDemoLayout(el.app.clientHeight || vh, descBottom);
   demoSize = demo.D;
   el.demoCanvas.hidden = demoSize === 0;
   el.demoCanvas.style.top = `${demo.centerY}px`;
   sizeCanvas(el.demoCanvas, Math.max(demoSize, 1));
-  if (screen === 'game') drawGame(performance.now());
 }
 
 // 横向きでブロックするのはタッチ主体の端末だけ（PCは画面を回せないため対象外）
@@ -228,7 +343,7 @@ function updateHud() {
   el.hudScore.textContent = formatNumber(play.score);
   el.hudSpeed.textContent = `SPEED ${stageOf(play)}`;
   el.hudCombo.textContent = play.combo >= 2 ? `${play.combo} COMBO` : '';
-  el.hudMode.textContent = modeOf(play.mode).label;
+  el.hudMode.textContent = hudLabelOf(play.mode);
   const hearts = el.hudLives.querySelectorAll('path');
   hearts.forEach((p, i) => p.setAttribute('class', i < play.lives ? 'heart-on' : 'heart-off'));
 }
@@ -253,14 +368,20 @@ function updateTimerHud(now) {
 }
 
 // ===== ゲームの進行（仕様書4.3） =====
-// modeId：タイトルで押したモード。「もう一度」は同じモード（仕様書6.5）
-function startGame(modeId) {
-  const mode = normalizeModeId(modeId);
-  store.setLastMode(mode); // モードのボタンを押した瞬間に保存（仕様書7章）
-  play = newPlayState(mode);
+// modeId：押したモード。startSpeed：Professional の選んだ Speed。「もう一度」は同じモード・同じ Speed（仕様書6.5）
+function startGame(modeId, startSpeed) {
+  const id = normalizeModeId(modeId);
+  const mode = modeOf(id);
+  store.setLastMode(id, startSpeed); // ゲーム開始の瞬間に保存（Professional は Speed も。仕様書7章）
+  play = newPlayState(id, startSpeed);
+  // 今日のチャレンジ：プレイを始めた日の盤（プレイ中に0時を過ぎても変えない。仕様書4.12.2）
+  play.dateKey = mode.seeded ? todayKey() : null;
+  dailySeedValue = mode.seeded ? dailySeed(play.dateKey) : null;
+  // index は -1 に戻し、次の startWait で 0（今日の盤の1ラウンド目）から
   round = {
-    k: null, W: null, shape: null, keepK: false, layout: null, layoutStage: null,
+    index: -1, k: null, W: null, shape: null, keepK: false, layout: null, layoutStage: null,
     ringMax: CONFIG.AUTO_MISS_FACTOR, next: 0, results: [], roundPoints: 0, successCount: 0,
+    waitStart: 0, ignoreUntil: null,
   };
   paused = false;
   endReason = null;
@@ -293,15 +414,15 @@ function startReady(now, resumed) {
   judged = null;
 }
 
-// ① 待ち：段階の開始と同時に、この時刻の経過時間とモードでスピード段階・T・W と新しい k（Hard は形、
-// Professional は配置）を決める（仕様書4.3・4.5.2・4.10）。
-// 一時停止からのやり直し（keepK）は k・W・形・配置は前の値、段階と T はここで決め直す。
-// ただし Professional で段階が上がっていたら、新しい配置にして W も引き直す（仕様書4.6）
+// ① 待ち：段階の開始と同時に、この時刻のスピード段階・T・W と新しい形・k（Professional・今日のチャレンジは配置）を
+// 決める（仕様書4.3・4.5.2・4.10・4.11.9 の擬似コード）。
+// 一時停止からのやり直し（keepK）は k・W・形・配置は前の値（ラウンドの番号も同じ）、段階と T はここで決め直す。
+// ただし配置のあるモードで段階が上がっていたら（PRO_SPEED_RAMP のときだけ起きる）、新しい配置にして W も引き直す（仕様書4.6）
 function startWait(now) {
-  const stage = stageAt(play.mode, elapsedAt(clock, now));
+  const stage = stageAt(play.mode, elapsedAt(clock, now), undefined, play.startSpeed);
   if (stage > stageOf(play)) {
     play.stage = stage;
-    speedBanner = { stage, start: now }; // 新しい速さの輪の直前に「SPEED n」（仕様書4.5.3）
+    speedBanner = { stage, start: now }; // 新しい速さの輪の直前に「SPEED n」（仕様書4.5.3）。固定の速さでは起きない
     updateHud();
   }
   T = tForStage(stageOf(play));
@@ -309,27 +430,35 @@ function startWait(now) {
   let fresh = !round.keepK || round.k == null;
   if (mode.multi && !fresh && round.layoutStage !== stageOf(play)) fresh = true;
   if (fresh) {
+    round.index += 1; // 新しいラウンドのときだけ +1（やり直しでは増やさない）
+    // 今日のチャレンジはラウンドの番号ごとに日付から作る乱数（このラウンドの中だけで使う）。ほかは Math.random
+    const rand = mode.seeded ? roundRand(dailySeedValue, round.index) : Math.random;
+    round.shape = nextShape(round.shape, rand, mode.shapes);                // 乱数1：形（1種のモードは乱数を使わない）
     if (mode.multi) {
-      round.layout = proLayout(stageOf(play), T);
+      round.layout = proLayout(stageOf(play), T, round.shape, rand);        // 乱数2〜5：数 → 間隔1 → 間隔2 → k₁
       round.layoutStage = stageOf(play);
       round.k = round.layout.k[0]; // 一番内側（輪の速さの基準）
     } else {
-      round.k = nextK(round.k);
+      round.k = nextK(round.k, rand);
     }
-    round.W = waitSecFor(stageOf(play));
-    // Hard：直前と違う形（1ラウンド目は3種類から）。ほかのモードは円
-    round.shape = mode.shapes ? nextShape(round.shape) : 'circle';
+    round.W = waitSecFor(stageOf(play), rand, play.mode);                    // 乱数6：W
   }
   round.keepK = false;
-  round.ringMax = ringMaxRatio(play.mode, round.layout, T);
+  round.ringMax = ringMaxRatio(play.mode, round.layout, T, stageOf(play));
   round.next = 0;
   round.results = [];
   round.roundPoints = 0;
   round.successCount = 0;
+  round.waitStart = now;
   phase = 'wait';
   phaseStart = now;
   t0 = null;
   judged = null;
+}
+
+// 次の目標の自動MISSの時刻（Easy・Normal・Hard は undefined ＝ t0 + 1.5T）
+function nextAutoMissAt() {
+  return round.layout ? proAutoMissAtMs(t0, round.layout.targetSec[round.next], T, stageOf(play), round.next) : undefined;
 }
 
 function update(ts) {
@@ -343,12 +472,14 @@ function update(ts) {
     startWait(readyEnd);
   }
   // 広がり中：自動MISSと時間切れが重なったら時刻の早いほう（同時刻は時間切れ）を先に処理する（仕様書4.9.3）。
-  // 自動MISSの時刻：Easy・Normal・Hard は t0 + 1.5T、Professional は次の目標の t0 + (Tᵢ + Dg × T)（仕様書4.10.4）
+  // 自動MISSの時刻：Easy・Normal・Hard は t0 + 1.5T、Professional は次の目標の t0 + (Tᵢ + Dgᵢ × T)（仕様書4.11.5）
   if (phase === 'grow') {
-    const autoAt = round.layout ? proAutoMissAtMs(t0, round.layout.targetSec[round.next], T) : undefined;
+    const autoAt = nextAutoMissAt();
     if (growFrameEvent(ts, t0, T, deadlineOf(clock), autoAt) === 'autoMiss') {
       // 止める輪の大きさ：Easy 等は上限（1.5）、Professional は その目標の自動MISSの時刻 ÷ T
-      const rRatio = round.layout ? proAutoMissAtSec(round.layout.targetSec[round.next], T) / T : round.ringMax;
+      const rRatio = round.layout
+        ? proAutoMissAtSec(round.layout.targetSec[round.next], T, stageOf(play), round.next) / T
+        : round.ringMax;
       doJudge({ result: 'MISS', early: false }, ts, rRatio, judgementEndMs('auto', null, t0, T, autoAt));
     }
   }
@@ -382,8 +513,9 @@ function judgeMidTarget(j, atMs) {
 }
 
 // ラウンドの最後の判定（MISS、または最後の目標）→ ③ 結果表示へ。
-// endMs：ライフ0になった場合に時計を止める時刻（タップの timeStamp、または自動MISSの時刻）
-function doJudge(j, atMs, rRatio, endMs) {
+// endMs：ライフ0になった場合に時計を止める時刻（タップの timeStamp、または自動MISSの時刻）。
+// falseStart：① 待ちのお手つき（輪は出ていないので、次の ① の無視は0.1秒だけ）
+function doJudge(j, atMs, rRatio, endMs, falseStart = false) {
   const r = applyJudgement(play, j.result);
   if (round.layout) {
     round.results[round.next] = { result: j.result, at: atMs };
@@ -391,6 +523,8 @@ function doJudge(j, atMs, rRatio, endMs) {
       round.roundPoints += r.points;
       round.successCount += 1;
     }
+    // 次の ① では、このラウンドの最後の目標の判定幅の終わりまでのタップもお手つきにしない（仕様書4.11.5）
+    round.ignoreUntil = !falseStart && t0 != null ? proIgnoreUntilMs(t0, round.layout, T, stageOf(play)) : null;
   }
   judged = { result: j.result, early: j.early, points: r.points, rRatio };
   phase = 'result';
@@ -401,8 +535,12 @@ function doJudge(j, atMs, rRatio, endMs) {
     endReason = 'lives';
     clock = stopClock(clock, endMs); // 残り時間をライフ0の時刻で止める
     el.btnPause.disabled = true;
-    lastRecord = store.recordPlayEnd(play.mode, play.score); // ライフ0の瞬間に保存（仕様書7章）
+    recordPlayEnd(); // ライフ0の瞬間に保存（仕様書7章）
   }
+}
+
+function recordPlayEnd() {
+  lastRecord = store.recordPlayEnd(play.mode, play.score, { speed: play.startSpeed, dateKey: play.dateKey });
 }
 
 // 時間切れ（仕様書4.9.3）：どの段階でも打ち切る。広がり中の輪は判定しない（MISSにしない）
@@ -416,7 +554,7 @@ function startTimeUp(ts) {
   speedBanner = null;
   clearMissEffects();
   el.btnPause.disabled = true;
-  lastRecord = store.recordPlayEnd(play.mode, play.score); // 時間切れの瞬間に保存（演出の前）
+  recordPlayEnd(); // 時間切れの瞬間に保存（演出の前）
 }
 
 // event.timeStamp が古い形式（1970年起点）の環境では performance.now() を使う
@@ -426,18 +564,33 @@ function eventTime(e) {
   return typeof ts === 'number' && ts > 0 && Math.abs(now - ts) < 60000 ? ts : now;
 }
 
+// 判定するタップを受け付ける段階か。② 広がり中に加えて、Professional・今日のチャレンジは ① 待ちも（お手つき）
 function canTap() {
-  return screen === 'game' && !paused && endReason === null && phase === 'grow' && t0 != null;
+  if (screen !== 'game' || paused || endReason !== null) return false;
+  if (phase === 'grow') return t0 != null;
+  return phase === 'wait' && !!modeOf(play.mode).falseStart;
+}
+
+// ① 待ちのタップ（Professional・今日のチャレンジ）：始まりから0.1秒と ignoreUntil の遅いほうまでは無視、
+// それ以降は「早い！」の MISS（輪は描かない）→ ③ → 次のラウンド（仕様書4.11.5）
+function tapDuringWait(timeMs) {
+  if (waitTapResult(play.mode, timeMs, round.waitStart, round.ignoreUntil) === 'ignore') return;
+  doJudge({ result: 'MISS', early: true }, timeMs, 0, judgementEndMs('tap', timeMs, t0, T), true);
 }
 
 // timeMs：補正前の event.timeStamp。締切時刻以上なら判定しない（仕様書4.7）
 function tapAt(timeMs) {
   if (!acceptsTapAt(clock, timeMs)) return;
+  // 輪が出る前のタップ（描画の前に届いたものを含む）は ① 待ちのタップとして扱う（お手つきのあるモードだけ）
+  if (phase === 'wait' || (modeOf(play.mode).falseStart && timeMs < t0)) {
+    tapDuringWait(timeMs);
+    return;
+  }
   const tTap = tapTimeSec(timeMs, t0);
   // Professional は「次の目標」の時刻と比べる（内側から順に1つずつ）。ほかのモードは T
   const layout = round.layout;
   const targetSec = layout ? layout.targetSec[round.next] : T;
-  const j = judge(tTap, targetSec, T);
+  const j = judge(tTap, targetSec, T, stageOf(play), round.next);
   if (layout && j.result !== 'MISS' && round.next < layout.count - 1) {
     judgeMidTarget(j, timeMs);
     return;
@@ -459,6 +612,10 @@ function isSpace(e) {
 }
 
 function onKeyDown(e) {
+  if (screen === 'speed') {
+    onSpeedKeyDown(e);
+    return;
+  }
   if (!isSpace(e) || screen !== 'game' || paused) return;
   // フォーカスの残ったボタン（一時停止など）がスペースで押されないようにする
   e.preventDefault();
@@ -484,6 +641,7 @@ function pauseGame() {
     round.keepK = false;                                              // 次のラウンドへ
   }
   // READY 中は keepK をそのまま（もう一度 READY から）
+  round.ignoreUntil = null; // 時刻の基準を取り直すので、再開の ① は0.1秒だけ無視（仕様書4.11.5）
   phase = null;
   t0 = null;
   judged = null;
@@ -513,10 +671,8 @@ function quitGame() {
   phase = null;
   el.pause.hidden = true;
   clearMissEffects();
-  showScreen('title');
   releaseHistoryEntry();
-  refreshTitle();
-  requestLoop();
+  showTitle();
 }
 
 // ===== 結果画面（仕様書6.5） =====
@@ -524,25 +680,84 @@ function showResult() {
   phase = null;
   showScreen('result');
   releaseHistoryEntry();
-  const label = modeOf(play.mode).label;
+  const id = play.mode;
+  const mode = modeOf(id);
+  const speed = stageOf(play);
   const texts = endTexts(endReason, play.lives, remainingMs(clock, performance.now()));
-  el.resultMode.textContent = label;
   el.resultHeading.textContent = texts.heading;
   el.resultReason.textContent = texts.detail;
-  el.resultNew.hidden = !(lastRecord && lastRecord.isNewRecord);
   el.resultScore.textContent = formatNumber(play.score);
-  el.resultBestMode.textContent = label;
-  el.resultBest.textContent = bestScoreText(store.recordOf(play.mode));
   el.resultUnsaved.hidden = store.persistent;
-  // 到達スピード＝このプレイで最後に遊んだラウンドのスピード段階（仕様書6.5）
-  el.resultDetail.textContent =
-    `到達スピード ${stageOf(play)} ／ PERFECT ${play.perfects}回 ／ 最大コンボ ${play.maxCombo}`;
-  el.btnRetry.disabled = true;
-  el.btnToTitle.disabled = true;
+  // 新記録：今日のチャレンジは「これまでの最高」を更新で NEW RECORD!、今日の最高だけなら「今日の最高を更新！」
+  const isNew = !!(lastRecord && lastRecord.isNewRecord);
+  const isNewToday = !isNew && !!(lastRecord && lastRecord.isNewToday) && id === 'daily';
+  el.resultNew.textContent = isNewToday ? '今日の最高を更新！' : 'NEW RECORD!';
+  el.resultNew.classList.toggle('on', isNew || isNewToday);
+  el.resultNew.classList.toggle('today', isNewToday);
+  el.resultBestSub.hidden = true;
+  el.resultBest.classList.toggle('daily', id === 'daily');
+  if (id === 'daily') {
+    const { today, allTime } = lastRecord ? lastRecord.record : store.dailyOf(play.dateKey);
+    el.resultMode.textContent = `${mode.label} ・ ${dateLabel(play.dateKey)} ・ SPEED ${speed}`;
+    el.resultBest.textContent = `今日の最高 ${dailyTodayText(today, play.dateKey)}（挑戦 ${today.playCount}回）`;
+    el.resultBestSub.textContent = `これまでの最高 ${dailyAllTimeText(allTime)}`;
+    el.resultBestSub.hidden = false;
+  } else if (id === 'pro') {
+    el.resultMode.textContent = `${mode.label} ・ SPEED ${play.startSpeed}`;
+    el.resultBest.textContent = `最高記録（SPEED ${play.startSpeed}） ${bestScoreText(store.proRecordOf(play.startSpeed))}`;
+  } else {
+    el.resultMode.textContent = mode.label;
+    el.resultBest.textContent = `最高記録（${mode.label}） ${bestScoreText(store.recordOf(id))}`;
+  }
+  // 詳細：速さが固定のモードは「SPEED n」、上がるモードは「到達スピード n」（最後に遊んだラウンドの段階）
+  const speedText = isFixedSpeedMode(id) ? `SPEED ${speed}` : `到達スピード ${speed}`;
+  el.resultDetail.textContent = `${speedText} ／ PERFECT ${play.perfects}回 ／ 最大コンボ ${play.maxCombo}`;
+  // シェアの文面（2行目は今のプレイ、3行目は保存した後の今日の記録）
+  lastShareText = shareText({
+    modeId: id, speed, score: play.score, perfects: play.perfects, maxCombo: play.maxCombo,
+    dateKey: play.dateKey, today: id === 'daily' && lastRecord ? lastRecord.record.today : null,
+  });
+  clearShareMessages();
+  // 3つ目のボタン：Professional は「Speedを変える」（画面1b）、ほかは「タイトルへ」
+  el.btnToTitle.textContent = id === 'pro' ? 'Speedを変える' : 'タイトルへ';
+  const buttons = [el.btnShare, el.btnRetry, el.btnToTitle];
+  for (const b of buttons) b.disabled = true;
   setTimeout(() => {
-    el.btnRetry.disabled = false;
-    el.btnToTitle.disabled = false;
+    for (const b of buttons) b.disabled = false;
   }, CONFIG.RESULT_BUTTON_LOCK_MS);
+}
+
+// ===== シェア（仕様書4.13）：共有画面 → コピー → 文面の表示 の順に試す。アプリからは送信しない =====
+function clearShareMessages() {
+  clearTimeout(shareNoticeTimer);
+  el.shareNotice.hidden = true;
+  el.shareFallback.hidden = true;
+  el.shareFallback.textContent = '';
+}
+
+async function onShare() {
+  const text = lastShareText;
+  clearShareMessages();
+  if (navigator.share) {
+    try {
+      await navigator.share({ text });
+      return;
+    } catch (e) {
+      if (e && e.name === 'AbortError') return; // ユーザーが閉じた
+    }
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      el.shareNotice.hidden = false;
+      shareNoticeTimer = setTimeout(() => { el.shareNotice.hidden = true; }, CONFIG.SHARE_NOTICE_MS);
+      return;
+    } catch {
+      // 下の「文面をそのまま表示」へ
+    }
+  }
+  el.shareFallback.textContent = text;
+  el.shareFallback.hidden = false;
 }
 
 // ===== 戻る操作（仕様書6.6） =====
@@ -559,7 +774,7 @@ function ensureHistoryEntry() {
 }
 
 // 画面2を出るとき（結果へ・やめる）に、積んだ1件を片付ける。
-// これで画面1・画面4では1回の戻る操作でページを離れられる（仕様書6.6）
+// これで画面1・画面1b・画面4では1回の戻る操作でページを離れられる（仕様書6.6・6.2.1）
 function releaseHistoryEntry() {
   if (ignoreNextPop || !isOwnHistoryEntry()) return;
   ignoreNextPop = true;
@@ -573,7 +788,7 @@ function onPopState() {
     if (screen === 'game') history.pushState(HISTORY_STATE, '');
     return;
   }
-  if (screen !== 'game') return; // 画面1・画面4：何もしない
+  if (screen !== 'game') return; // 画面1・画面1b・画面4：何もしない
   pauseGame(); // ライフ0の後・TIME UP 中は pauseGame 内で無視される
   history.pushState(HISTORY_STATE, '');
 }
@@ -595,7 +810,8 @@ function clearMissEffects() {
 }
 
 // ===== 描画 =====
-// shape：'circle' | 'triangle' | 'square'。r は中心から頂点まで（円は半径）。角は丸める（仕様書4.10.3）
+// shape：'circle' | 'triangle' | 'square' | 'diamond' | 'star'。r は中心から一番外の点まで（円は半径）。
+// 角は丸める（仕様書4.10.3・4.11.4）
 function strokeShape(ctx, shape, cx, cy, r, color, width, glow) {
   if (r <= 0) return;
   ctx.save();
@@ -630,10 +846,10 @@ function drawText(ctx, text, x, y, size, color, alpha = 1, baseline = 'middle', 
   ctx.restore();
 }
 
-// Professional の目標（同心の円 2〜3個）：未判定は白、成功した目標は0.2秒光ってから灰色（仕様書4.10.4）。
+// Professional・今日のチャレンジの目標（同じ形の同心の 2〜3個）：未判定は白、成功した目標は0.2秒光ってから灰色（仕様書4.10.4）。
 // MISS で打ち切ったときの未判定の目標（と MISS した目標）は白のまま
 function drawProTargets(ctx, cx, cy, ts) {
-  const { k } = round.layout;
+  const { k, shape } = round.layout;
   for (let i = 0; i < k.length; i++) {
     const res = round.results[i];
     let color = COLOR.white;
@@ -646,7 +862,7 @@ function drawProTargets(ctx, cx, cy, ts) {
         color = COLOR.done;
       }
     }
-    strokeShape(ctx, 'circle', cx, cy, k[i] * S, color, 3, glow);
+    strokeShape(ctx, shape, cx, cy, k[i] * S, color, 3, glow);
   }
 }
 
@@ -662,8 +878,10 @@ function drawGame(ts) {
     drawText(ctx, 'TIME UP', cx, cy, 40, COLOR.white);
     return;
   }
-  // Professional：止めている間に段階の境界を越えていたら、再開の ① で新しい配置になるので古い配置は出さない
-  const staleLayout = !!round.layout && round.layoutStage !== stageAt(play.mode, elapsedAt(clock, ts));
+  // 配置のあるモード：止めている間に段階の境界を越えていたら（PRO_SPEED_RAMP のときだけ）、
+  // 再開の ① で新しい配置になるので古い配置は出さない
+  const staleLayout = !!round.layout
+    && round.layoutStage !== stageAt(play.mode, elapsedAt(clock, ts), undefined, play.startSpeed);
   const keptK = round.keepK && round.k != null && !staleLayout;
   const showTarget = phase === 'wait' || phase === 'grow' || phase === 'result' || ((phase === 'ready' || paused) && keptK);
   const R = (round.k || 0) * S;
@@ -682,6 +900,7 @@ function drawGame(ts) {
     const t = Math.max(0, (ts - t0) / 1000);
     strokeShape(ctx, shape, cx, cy, R * Math.min(t / T, round.ringMax), COLOR.ring, 6, false);
   } else if (phase === 'result') {
+    // お手つき（輪が出る前の MISS）は rRatio 0 なので輪は描かれない
     const color = flashing === 'PERFECT' ? COLOR.perfect : flashing === 'GOOD' ? COLOR.good : COLOR.ring;
     strokeShape(ctx, shape, cx, cy, R * judged.rRatio, color, 6, flashing === 'PERFECT' || flashing === 'GOOD');
     const p = Math.min(1, Math.max(0, (ts - phaseStart) / CONFIG.RESULT_MS));
@@ -701,7 +920,7 @@ function drawGame(ts) {
     }
   } else if (phase === 'ready') {
     drawText(ctx, 'READY', cx, cy, 32, COLOR.white);
-    // その28px下（中心どうしの間隔）にモード名と開始段階（再開時は今の段階）（仕様書6.3）
+    // その28px下（中心どうしの間隔）にモード名と開始段階（再開時は今の段階。固定の速さは「から」なし）（仕様書6.3）
     drawText(ctx, readySubText(play.mode, stageOf(play), readyResumed), cx, cy + 28, 16, COLOR.sub, 1, 'middle', false);
   }
 
@@ -764,11 +983,13 @@ function frame(ts) {
 el.btnPause.addEventListener('click', pauseGame);
 el.btnResume.addEventListener('click', resumeGame);
 el.btnQuit.addEventListener('click', quitGame);
-el.btnRetry.addEventListener('click', () => startGame(play.mode)); // 同じモードでもう一度
+el.btnSpeedStart.addEventListener('click', startSelectedSpeed);
+el.btnSpeedBack.addEventListener('click', showTitle);
+el.btnShare.addEventListener('click', onShare);
+el.btnRetry.addEventListener('click', () => startGame(play.mode, play.startSpeed)); // 同じモード・同じ Speed でもう一度
 el.btnToTitle.addEventListener('click', () => {
-  showScreen('title');
-  refreshTitle();
-  requestLoop();
+  if (play && play.mode === 'pro') openSpeedSelect(play.startSpeed); // Speedを変える
+  else showTitle();
 });
 el.screens.game.addEventListener('pointerdown', onGamePointerDown);
 document.addEventListener('keydown', onKeyDown);
@@ -791,6 +1012,7 @@ for (const mq of [mqCoarse, mqHoverNone]) {
 document.documentElement.style.setProperty('--timer-pulse-ms', `${CONFIG.TIMER_PULSE_MS}ms`);
 buildHearts();
 buildModeButtons();
+buildSpeedButtons();
 recomputeLayout();
 checkOrientation();
 refreshTitle();

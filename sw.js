@@ -1,6 +1,6 @@
 // ぴたリング Service Worker（仕様書8.2）
 // ★どのファイルを変えて公開するときも、ここの版番号を上げる（v2, v3 …）
-const VERSION = 'v9';
+const VERSION = 'v11';
 const CACHE_NAME = `pitaring-${VERSION}`;
 const ASSETS = [
   './',

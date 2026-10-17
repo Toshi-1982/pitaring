@@ -109,8 +109,8 @@ html.pc-frame body {
   left: 50%;
   transform: translate(-50%, -50%);
 }
-/* モードのボタン4つ：縦に並べ、一番下のボタンの下端は画面下から6%。
-   各ボタン 幅＝枠の幅−32px（最大400px）・高さ56px・間隔8px（合計248px） */
+/* モードのボタン5つ：縦に並べ、一番下のボタンの下端は画面下から6%。
+   各ボタン 幅＝枠の幅−32px（最大400px）・高さ56px・間隔8px（合計312px。logic.js の TITLE_LAYOUT と同じ） */
 .mode-buttons {
   position: absolute;
   left: 0; right: 0;
@@ -135,6 +135,8 @@ html.pc-frame body {
 }
 /* 前回遊んだモード（lastMode）だけ塗り */
 .mode-btn.last { background: var(--teal); border-color: var(--teal); color: #1E2230; }
+/* 今日のチャレンジは枠線を黄（塗りのときも枠は黄） */
+.mode-btn.daily { border-color: var(--yellow); }
 /* 1行目：左に表示名20px太字、右に「最高 ○」14px（下端をそろえる） */
 .mode-row1 { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; height: 24px; line-height: 24px; }
 .mode-label { font-size: 20px; font-weight: bold; white-space: nowrap; }
@@ -142,6 +144,75 @@ html.pc-frame body {
 /* 2行目：左に説明文12px・灰色。右側には何も置かない */
 .mode-note { display: block; height: 24px; line-height: 24px; font-size: 12px; color: #B0B6C8; }
 .mode-btn.last .mode-note { color: #1E2230; }
+
+/* ===== 画面1b：スピード選択（仕様書6.2.1） ===== */
+.speed-heading, .speed-desc, .speed-value, .speed-info {
+  position: absolute;
+  left: 16px; right: 16px;
+  text-align: center;
+}
+/* 見出し：画面上から10%（中心）、28px太字 */
+.speed-heading { top: 10%; transform: translateY(-50%); font-size: 28px; line-height: 28px; font-weight: bold; }
+/* 説明：見出しの28px下（中心どうし）、14px・灰色 */
+.speed-desc { top: calc(10% + 28px); transform: translateY(-50%); font-size: 14px; line-height: 20px; color: #B0B6C8; }
+/* 選んでいる Speed：画面上から30%（中心）、48px太字 */
+.speed-value { top: 30%; transform: translateY(-50%); font-size: 48px; line-height: 48px; font-weight: bold; white-space: nowrap; }
+/* その下の1行：32px下、14px・灰色 */
+.speed-info { top: calc(30% + 32px); font-size: 14px; line-height: 14px; color: #B0B6C8; }
+/* 下から：もどるの下端が画面下から6%、その8px上にスタート、その16px上に Speed のボタン2段 */
+.speed-bottom {
+  position: absolute;
+  left: 0; right: 0;
+  bottom: 6%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+/* 2段 × 5列。各ボタン 幅＝(枠の幅 − 32 − 6×4) ÷ 5、高さ56px、間隔6px */
+.speed-buttons {
+  width: calc(100% - 32px);
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+.speed-btn {
+  height: 56px;
+  min-width: 0;
+  padding: 0;
+  border: 1px solid var(--fg);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 20px;
+  font-weight: bold;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.speed-btn.selected { background: var(--teal); border-color: var(--teal); color: #1E2230; }
+.btn-speed-start, .btn-speed-back {
+  width: min(calc(100% - 32px), 400px);
+  border-radius: 14px;
+  font: inherit;
+  cursor: pointer;
+}
+.btn-speed-start {
+  height: 64px;
+  margin-top: 16px;
+  font-size: 20px;
+  font-weight: bold;
+  background: var(--teal);
+  color: #1E2230;
+  border: none;
+}
+.btn-speed-back {
+  height: 48px;
+  margin-top: 8px;
+  font-size: 18px;
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--fg);
+}
 
 /* ===== 画面2：ゲーム ===== */
 #screen-game.active { display: flex; flex-direction: column; }
@@ -291,27 +362,47 @@ html.pc-frame body {
 }
 
 /* ===== 画面4：結果 ===== */
+/* 上から縦に並べる（各行の高さ＝文字の大きさ＋余白。仕様書6.5 の高さ568px の検算と同じ） */
 .result-body {
   position: absolute;
-  top: 10%;
+  top: 6%;
   left: 16px; right: 16px;
   text-align: center;
 }
-.result-mode { font-size: 16px; color: #B0B6C8; margin-bottom: 4px; }
-.result-heading { font-size: 24px; }
-.result-reason { font-size: 14px; color: #B0B6C8; margin-top: 4px; margin-bottom: 20px; }
-.result-new { color: var(--yellow); font-size: 20px; font-weight: bold; }
-.result-score { font-size: 48px; font-weight: bold; font-variant-numeric: tabular-nums; margin-bottom: 12px; }
-.result-best { font-size: 20px; }
-.result-unsaved { font-size: 12px; color: var(--muted); margin-top: 4px; }
-.result-detail { font-size: 16px; margin-top: 20px; line-height: 1.6; }
+.result-mode { font-size: 16px; line-height: 24px; color: #B0B6C8; }
+.result-heading { font-size: 24px; line-height: 32px; }
+.result-reason { font-size: 14px; line-height: 20px; color: #B0B6C8; margin-bottom: 8px; }
+/* 新記録の行：出ないときも高さを取る */
+.result-new { color: var(--yellow); font-size: 20px; line-height: 28px; font-weight: bold; visibility: hidden; }
+.result-new.on { visibility: visible; }
+.result-new.today { font-size: 16px; }
+.result-score { font-size: 48px; line-height: 56px; font-weight: bold; font-variant-numeric: tabular-nums; }
+.result-best { font-size: 20px; line-height: 28px; }
+.result-best.daily { font-size: 16px; line-height: 24px; }
+.result-best-sub { font-size: 14px; line-height: 20px; color: #B0B6C8; }
+.result-unsaved { font-size: 12px; line-height: 18px; color: var(--muted); }
+.result-detail { font-size: 16px; line-height: 24px; }
+/* 「もう一度」の中心を画面下から20%に。その8px上に「結果をシェア」、12px下に「タイトルへ」 */
 .result-buttons {
   position: absolute;
   left: 0; right: 0;
-  bottom: calc(20% - 32px - 12px - 48px); /* 「もう一度」の中心を画面下から20%に */
+  bottom: calc(20% - 32px - 12px - 48px);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+}
+.btn-share { height: 44px; font-size: 16px; background: transparent; border: 2px solid var(--fg); margin-bottom: 8px; }
+#btn-to-title { margin-top: 12px; }
+/* シェアの「コピーしました」と、共有もコピーもできないときの文面（選択してコピーできる） */
+.share-notice { font-size: 12px; line-height: 16px; color: #B0B6C8; text-align: center; margin: -4px 0 8px; }
+.share-fallback {
+  width: 70%;
+  margin: 0 auto 8px;
+  font-size: 12px;
+  line-height: 16px;
+  color: #B0B6C8;
+  white-space: pre-wrap;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 /* ===== 横向き ===== */

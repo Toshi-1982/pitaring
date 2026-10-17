@@ -19,10 +19,24 @@
   <!-- 画面1：タイトル -->
   <section id="screen-title" class="screen active" aria-label="タイトル">
     <h1 class="title-name">ぴたリング</h1>
-    <p class="title-desc">広がる輪が白い円に重なったら、どこでもタップ</p>
+    <p id="title-desc" class="title-desc">広がる輪が白い円に重なったら、どこでもタップ</p>
     <canvas id="demo-canvas" class="demo-canvas" aria-hidden="true"></canvas>
-    <!-- モードのボタン4つ（仕様書6.2）。中身は game.js が CONFIG.MODES から作る -->
+    <!-- モードのボタン5つ（仕様書6.2）。中身は game.js が CONFIG.MODES から作る -->
     <div id="mode-buttons" class="mode-buttons"></div>
+  </section>
+
+  <!-- 画面1b：スピード選択（Professional だけ。仕様書6.2.1） -->
+  <section id="screen-speed" class="screen" aria-label="スピード選択">
+    <h2 class="speed-heading">Professional</h2>
+    <p class="speed-desc">Speed を選んでください</p>
+    <p id="speed-value" class="speed-value">SPEED 10</p>
+    <p id="speed-info" class="speed-info"></p>
+    <div class="speed-bottom">
+      <!-- Speed のボタン10個（2段×5列）。中身は game.js が CONFIG.PRO_SPEED_CHOICES から作る -->
+      <div id="speed-buttons" class="speed-buttons" role="group" aria-label="Speed"></div>
+      <button id="btn-speed-start" class="btn-speed-start" type="button">SPEED 10 でスタート</button>
+      <button id="btn-speed-back" class="btn-speed-back" type="button">もどる</button>
+    </div>
   </section>
 
   <!-- 画面2：ゲーム（全面が判定エリア） -->
@@ -48,13 +62,18 @@
       <p id="result-mode" class="result-mode">Easy</p>
       <h2 id="result-heading" class="result-heading">ゲームオーバー</h2>
       <p id="result-reason" class="result-reason"></p>
-      <p id="result-new" class="result-new" hidden>NEW RECORD!</p>
+      <!-- 新記録の行（出ないときも高さを取る。class "on" で表示） -->
+      <p id="result-new" class="result-new">NEW RECORD!</p>
       <p id="result-score" class="result-score">0</p>
-      <p class="result-best">最高記録（<span id="result-best-mode">Easy</span>） <span id="result-best">---</span></p>
+      <p id="result-best" class="result-best">最高記録（Easy） ---</p>
+      <p id="result-best-sub" class="result-best-sub" hidden></p>
       <p id="result-unsaved" class="result-unsaved" hidden>この環境では記録を保存できません</p>
       <p id="result-detail" class="result-detail"></p>
     </div>
     <div class="result-buttons">
+      <button id="btn-share" class="btn btn-share" type="button">結果をシェア</button>
+      <p id="share-notice" class="share-notice" hidden>コピーしました</p>
+      <p id="share-fallback" class="share-fallback" hidden></p>
       <button id="btn-retry" class="btn btn-primary" type="button">もう一度</button>
       <button id="btn-to-title" class="btn btn-outline" type="button">タイトルへ</button>
     </div>
