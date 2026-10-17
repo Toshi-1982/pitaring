@@ -1,0 +1,339 @@
+/* ぴたリング（仕様書6章） */
+:root {
+  --bg: #1E2230;
+  --fg: #FFFFFF;
+  --red: #FF5252;
+  --gray: #555B6E;
+  --yellow: #FFD54A;
+  --teal: #4DD0B5;
+  --muted: #9AA0B4;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+[hidden] { display: none !important; }
+
+/* 誤操作防止（仕様書6.1） */
+html, body {
+  touch-action: manipulation;
+  overscroll-behavior: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html { background: var(--bg); }
+
+body {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* セーフエリア（ノッチ・ホームバー） */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+#app { position: relative; width: 100%; height: 100%; }
+
+/* PC（マウス操作）：縦長のスマホ相当の枠を中央に表示（修正3回目）。
+   枠の幅 --frame-w は game.js が計算して入れる（高さ×9/16、320〜480px）。
+   transform を付けると、一時停止・MISSの赤などの fixed 要素もこの枠の中に収まる。 */
+html.pc-frame { background: #14171F; }
+html.pc-frame body {
+  left: 0;
+  right: 0;
+  width: var(--frame-w, 100%);
+  max-width: 100%; /* 表示幅が枠の下限（320px）より狭くてもはみ出さない */
+  margin: 0 auto;
+  transform: translateZ(0);
+}
+
+.screen { position: absolute; inset: 0; display: none; }
+/* 狭い幅（280px程度）でも文字が切れないよう、長い1行は折り返す */
+.screen, .overlay { overflow-wrap: anywhere; }
+.screen.active { display: block; }
+
+/* ボタン共通（最小44×44px） */
+.btn {
+  display: block;
+  width: 70%;
+  min-height: 44px;
+  margin: 0 auto;
+  border-radius: 14px;
+  font: inherit;
+  color: var(--fg);
+  cursor: pointer;
+}
+.btn-primary {
+  height: 64px;
+  font-size: 24px;
+  font-weight: bold;
+  background: var(--teal);
+  color: #10131C;
+  border: none;
+}
+.btn-outline {
+  height: 48px;
+  font-size: 18px;
+  background: transparent;
+  border: 2px solid var(--fg);
+}
+.btn:disabled { opacity: 0.5; }
+
+/* ===== 画面1：タイトル ===== */
+/* ゲーム名：画面上から12%の位置（中心）、36px太字（仕様書6.2） */
+.title-name {
+  position: absolute;
+  top: 12%;
+  left: 16px; right: 16px;
+  transform: translateY(-50%);
+  text-align: center;
+  font-size: 36px;
+  line-height: 44px;
+  font-weight: bold;
+}
+/* 説明：ゲーム名の8px下（ゲーム名の下端 = 12% + 22px） */
+.title-desc {
+  position: absolute;
+  top: calc(12% + 22px + 8px);
+  left: 16px; right: 16px;
+  text-align: center;
+  font-size: 16px;
+  line-height: 24px;
+}
+/* デモ：説明とモードのボタンの間の空きの中央（位置と大きさは game.js が入れる） */
+.demo-canvas {
+  position: absolute;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+/* モードのボタン4つ：縦に並べ、一番下のボタンの下端は画面下から6%。
+   各ボタン 幅＝枠の幅−32px（最大400px）・高さ56px・間隔8px（合計248px） */
+.mode-buttons {
+  position: absolute;
+  left: 0; right: 0;
+  bottom: 6%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.mode-btn {
+  display: block;
+  width: min(calc(100% - 32px), 400px);
+  height: 56px;
+  padding: 3px 15px; /* 枠線1px＋3px＝上下4px、1px＋15px＝左右16px。中身は24px×2行 */
+  border-radius: 12px;
+  border: 1px solid var(--fg);
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+/* 前回遊んだモード（lastMode）だけ塗り */
+.mode-btn.last { background: var(--teal); border-color: var(--teal); color: #1E2230; }
+/* 1行目：左に表示名20px太字、右に「最高 ○」14px（下端をそろえる） */
+.mode-row1 { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; height: 24px; line-height: 24px; }
+.mode-label { font-size: 20px; font-weight: bold; white-space: nowrap; }
+.mode-best { font-size: 14px; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; flex-shrink: 0; }
+/* 2行目：左に説明文12px・灰色。右側には何も置かない */
+.mode-note { display: block; height: 24px; line-height: 24px; font-size: 12px; color: #B0B6C8; }
+.mode-btn.last .mode-note { color: #1E2230; }
+
+/* ===== 画面2：ゲーム ===== */
+#screen-game.active { display: flex; flex-direction: column; }
+#screen-game, .game-canvas { touch-action: none; }
+
+/* 上部UI 120px = 上余白4 + 時間バー4 + 1段目48 + 2段目24 + 3段目32 + 下余白8（仕様書6.3） */
+.hud { height: 120px; flex: none; padding: 4px 0 8px; }
+
+/* 残り時間バー（仕様書4.9.1）：幅＝枠の幅−32px、高さ4px、角丸2px。左端固定で右から縮む */
+.hud-timebar {
+  height: 4px;
+  margin: 0 16px;
+  border-radius: 2px;
+  background: #343A4F;
+  overflow: hidden;
+}
+.hud-timebar-fill { height: 100%; width: 100%; border-radius: 2px; background: var(--teal); }
+.hud.time-warn .hud-timebar-fill { background: var(--red); }
+
+.hud-row1 {
+  position: relative;
+  height: 48px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 16px;
+}
+.hud-score { font-size: 28px; font-weight: bold; font-variant-numeric: tabular-nums; }
+
+/* 残り秒数：スコアや一時停止ボタンの幅に関係なく枠の左右中央に置く（絶対配置） */
+.hud-time {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.hud-time-num {
+  display: inline-block;
+  font-size: 28px;
+  font-weight: bold;
+  font-variant-numeric: tabular-nums;
+}
+.hud-time-unit { font-size: 14px; }
+.hud.time-warn .hud-time-num { color: var(--red); }
+/* 残り10秒から、数字が変わるたびに 1.0 → 1.2 → 1.0 倍（0.2秒） */
+.hud-time.pulse .hud-time-num { animation: timer-pulse var(--timer-pulse-ms, 200ms) ease-out; }
+@keyframes timer-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.2); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hud-time.pulse .hud-time-num { animation: none; }
+}
+
+.btn-pause {
+  width: 44px;
+  height: 44px;
+  font-size: 22px;
+  font-weight: bold;
+  color: var(--fg);
+  background: rgba(255, 255, 255, 0.12);
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.hud-row2 { position: relative; height: 24px; line-height: 24px; text-align: center; font-size: 16px; }
+/* SPEED は2段目の左（スコアと左端をそろえる）、モード名は右（14px・灰色・右余白16px） */
+.hud-speed { position: absolute; left: 16px; top: 0; }
+.hud-mode { position: absolute; right: 16px; top: 0; font-size: 14px; color: #B0B6C8; }
+.hud-row3 { height: 32px; display: flex; justify-content: center; align-items: center; gap: 8px; }
+.hud-row3 svg { width: 24px; height: 24px; display: block; }
+.heart-on { fill: var(--red); }
+.heart-off { fill: var(--gray); }
+
+.stage {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-bottom: 20px; /* 最下部の余白 */
+  min-height: 0;
+}
+.game-canvas { display: block; }
+
+/* MISS：揺れ（±6px・0.2秒） */
+.shake { animation: shake 0.2s linear; }
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(6px); }
+  60% { transform: translateX(-6px); }
+  80% { transform: translateX(6px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .shake { animation: none; }
+}
+
+/* MISS：画面全体に赤30%を0.2秒 */
+.miss-flash {
+  position: fixed;
+  inset: 0;
+  background: var(--red);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+.miss-flash.on { opacity: 0.3; }
+
+/* ===== 画面3：一時停止 ===== */
+.overlay {
+  position: fixed;
+  inset: 0;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+.pause-overlay { background: rgba(0, 0, 0, 0.7); z-index: 10; }
+.pause-inner { position: relative; width: 100%; height: 100%; }
+.pause-heading {
+  position: absolute;
+  top: 30%;
+  left: 16px; right: 16px;
+  text-align: center;
+  font-size: 28px;
+}
+.pause-mode {
+  position: absolute;
+  top: calc(30% + 44px);
+  left: 16px; right: 16px;
+  text-align: center;
+  font-size: 20px;
+}
+.pause-status {
+  position: absolute;
+  top: calc(30% + 80px);
+  left: 16px; right: 16px;
+  text-align: center;
+  font-size: 18px;
+}
+.pause-buttons {
+  position: absolute;
+  left: 0; right: 0;
+  bottom: calc(20% - 32px - 16px - 48px);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ===== 画面4：結果 ===== */
+.result-body {
+  position: absolute;
+  top: 10%;
+  left: 16px; right: 16px;
+  text-align: center;
+}
+.result-mode { font-size: 16px; color: #B0B6C8; margin-bottom: 4px; }
+.result-heading { font-size: 24px; }
+.result-reason { font-size: 14px; color: #B0B6C8; margin-top: 4px; margin-bottom: 20px; }
+.result-new { color: var(--yellow); font-size: 20px; font-weight: bold; }
+.result-score { font-size: 48px; font-weight: bold; font-variant-numeric: tabular-nums; margin-bottom: 12px; }
+.result-best { font-size: 20px; }
+.result-unsaved { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.result-detail { font-size: 16px; margin-top: 20px; line-height: 1.6; }
+.result-buttons {
+  position: absolute;
+  left: 0; right: 0;
+  bottom: calc(20% - 32px - 12px - 48px); /* 「もう一度」の中心を画面下から20%に */
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ===== 横向き ===== */
+.rotate-overlay {
+  background: var(--bg);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  text-align: center;
+}
+
+/* セーフエリアの値の読み取り用 */
+.safe-probe {
+  position: fixed;
+  top: 0; left: 0;
+  width: 0; height: 0;
+  visibility: hidden;
+  pointer-events: none;
+  padding-top: env(safe-area-inset-top);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+}

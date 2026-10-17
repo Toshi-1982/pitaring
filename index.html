@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ぴたリング</title>
+<meta name="theme-color" content="#1E2230">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ぴたリング">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="style.css">
+<script type="module" src="game.js"></script>
+</head>
+<body>
+<div id="app">
+
+  <!-- 画面1：タイトル -->
+  <section id="screen-title" class="screen active" aria-label="タイトル">
+    <h1 class="title-name">ぴたリング</h1>
+    <p class="title-desc">広がる輪が白い円に重なったら、どこでもタップ</p>
+    <canvas id="demo-canvas" class="demo-canvas" aria-hidden="true"></canvas>
+    <!-- モードのボタン4つ（仕様書6.2）。中身は game.js が CONFIG.MODES から作る -->
+    <div id="mode-buttons" class="mode-buttons"></div>
+  </section>
+
+  <!-- 画面2：ゲーム（全面が判定エリア） -->
+  <section id="screen-game" class="screen" aria-label="ゲーム">
+    <div id="hud" class="hud">
+      <div class="hud-timebar" aria-hidden="true"><div id="hud-timebar-fill" class="hud-timebar-fill"></div></div>
+      <div class="hud-row1">
+        <span id="hud-score" class="hud-score">0</span>
+        <span id="hud-time" class="hud-time" aria-label="残り時間"><span id="hud-time-num" class="hud-time-num">60</span><span class="hud-time-unit">秒</span></span>
+        <button id="btn-pause" class="btn-pause" type="button" aria-label="一時停止">Ⅱ</button>
+      </div>
+      <div class="hud-row2"><span id="hud-speed" class="hud-speed">SPEED 1</span><span id="hud-combo"></span><span id="hud-mode" class="hud-mode">Easy</span></div>
+      <div id="hud-lives" class="hud-row3" aria-label="ライフ"></div>
+    </div>
+    <div class="stage">
+      <canvas id="game-canvas" class="game-canvas"></canvas>
+    </div>
+  </section>
+
+  <!-- 画面4：結果 -->
+  <section id="screen-result" class="screen" aria-label="結果">
+    <div class="result-body">
+      <p id="result-mode" class="result-mode">Easy</p>
+      <h2 id="result-heading" class="result-heading">ゲームオーバー</h2>
+      <p id="result-reason" class="result-reason"></p>
+      <p id="result-new" class="result-new" hidden>NEW RECORD!</p>
+      <p id="result-score" class="result-score">0</p>
+      <p class="result-best">最高記録（<span id="result-best-mode">Easy</span>） <span id="result-best">---</span></p>
+      <p id="result-unsaved" class="result-unsaved" hidden>この環境では記録を保存できません</p>
+      <p id="result-detail" class="result-detail"></p>
+    </div>
+    <div class="result-buttons">
+      <button id="btn-retry" class="btn btn-primary" type="button">もう一度</button>
+      <button id="btn-to-title" class="btn btn-outline" type="button">タイトルへ</button>
+    </div>
+  </section>
+</div>
+
+<!-- 画面3：一時停止（画面2の上に重ねる） -->
+<div id="screen-pause" class="overlay pause-overlay" hidden>
+  <div class="pause-inner">
+    <h2 class="pause-heading">一時停止中</h2>
+    <p id="pause-mode" class="pause-mode">Easy</p>
+    <p id="pause-status" class="pause-status"></p>
+    <div class="pause-buttons">
+      <button id="btn-resume" class="btn btn-primary" type="button">つづける</button>
+      <button id="btn-quit" class="btn btn-outline" type="button">やめる</button>
+    </div>
+  </div>
+</div>
+
+<!-- MISS時の赤い重ね表示 -->
+<div id="miss-flash" class="miss-flash" aria-hidden="true"></div>
+
+<!-- 横向きのとき -->
+<div id="rotate-overlay" class="overlay rotate-overlay" hidden>
+  <p>縦向きでお遊びください</p>
+</div>
+
+<!-- セーフエリアの値を読むための非表示要素 -->
+<div id="safe-probe" class="safe-probe" aria-hidden="true"></div>
+</body>
+</html>
